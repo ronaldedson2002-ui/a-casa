@@ -77,3 +77,26 @@ dialog h3{margin:0 0 12px;font:700 1.15rem var(--serif);color:var(--oliva-esc)}
 #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(76px + env(safe-area-inset-bottom,0px));z-index:20;background:var(--grafite);color:var(--creme);
   padding:10px 16px;border-radius:10px;max-width:92vw;font-size:.92rem;opacity:0;pointer-events:none;transition:opacity .2s}
 #toast.on{opacity:1}#toast.bad{background:var(--erro)}
+
+/* ---------- Fase 2 · tarefas ---------- */
+[hidden]{display:none!important}
+select{font:inherit;width:100%;background:#fff;color:var(--grafite);border:1px solid var(--linha);border-radius:8px;padding:9px 11px}
+select:focus-visible,textarea:focus-visible{outline:2px solid var(--madeira);outline-offset:2px}
+.head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+.filtros{display:flex;gap:8px;margin-bottom:6px;flex-wrap:wrap}
+.filtros button{font:inherit;background:transparent;border:1px solid var(--linha);color:var(--suave);border-radius:99px;padding:5px 14px;cursor:pointer}
+.filtros button.on{background:var(--oliva);border-color:var(--oliva);color:#fff;font-weight:600}
+.trow{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--linha)}
+.trow:last-child{border:0}
+.trow .fx{flex:1;min-width:0}.trow .t{font-weight:600;overflow-wrap:anywhere}
+.trow.done .t{text-decoration:line-through;color:var(--suave);font-weight:400}
+.chk{width:28px;height:28px;flex:none;border-radius:50%;border:2px solid var(--oliva);background:transparent;cursor:pointer;padding:0}
+.chk:hover{background:rgba(91,107,58,.15)}
+.chk:focus-visible{outline:2px solid var(--madeira);outline-offset:2px}
+.tag{border:1px solid var(--linha);border-radius:6px;padding:0 6px;font-size:.78rem;background:var(--bege)}
+.late{color:var(--erro);font-weight:600}
+.tl{color:inherit;text-decoration:none}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.dacts.wrap{flex-wrap:wrap}
+dialog{max-height:92vh;overflow:auto}
+@media(max-width:420px){.two{grid-template-columns:1fr}}

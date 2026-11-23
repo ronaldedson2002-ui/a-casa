@@ -1,38 +1,6 @@
-// A CASA · Fase 1 · login, Central da Casa, ambientes e backup
-import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
-
-const $ = (s, r = document) => r.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const root = $("#root");
-const dlg = $("#dlg");
-
-if (!window.supabase) {
-  root.innerHTML = `<main class="login"><div class="card login-card"><p>Não foi possível carregar a biblioteca do Supabase. Verifique a conexão e recarregue a página.</p></div></main>`;
-  throw new Error("supabase-js não carregou");
-}
-const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-
-// Estado em memória (os dados de verdade ficam no Supabase)
-const S = { user: null, me: null, household: null, members: [], rooms: [] };
-
-/* ---------- utilidades ---------- */
-let toastTimer;
-function toast(msg, bad = false) {
-  const t = $("#toast");
-  t.textContent = msg;
-  t.className = "on" + (bad ? " bad" : "");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.className = ""), 5000);
-}
-function erro(e) {
-  const m = (e && e.message) || String(e);
-  if (/Invalid login/i.test(m)) return "E-mail ou senha incorretos.";
-  if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return "Sem conexão com o servidor. Tente de novo.";
-  return m;
-}
-function dialog(html) { dlg.innerHTML = html; if (!dlg.open) dlg.showModal(); }
-dlg.addEventListener("click", e => { if (e.target.closest("[data-close]")) dlg.close(); });
-const memberName = id => (S.members.find(m => m.user_id === id) || {}).display_name || "Alguém";
+// A CASA · login, navegação, Central da Casa, ambientes e backup
+import { $, esc, root, db, S, toast, erro, dialog, closeDialog, memberName, loadRooms } from "./core.js";
+import { vTarefas, loadTasks, painelCentral, taskTitle, tarefasOk, abertasNaSala } from "./tarefas.js";
 
 /* ---------- login ---------- */
 function showLogin(msg = "") {
@@ -59,11 +27,6 @@ function showLogin(msg = "") {
 db.auth.onAuthStateChange(ev => { if (ev === "SIGNED_OUT") { S.user = S.me = null; showLogin(); } });
 
 /* ---------- carga de dados ---------- */
-async function loadRooms() {
-  const { data, error } = await db.from("rooms").select("*").order("sort_order").order("name");
-  if (error) throw error;
-  S.rooms = data;
-}
 async function loadContext() {
   const { data: ms, error } = await db.from("household_members").select("household_id,user_id,display_name,role").order("created_at");
   if (error) throw error;
@@ -82,10 +45,10 @@ function shell() {
   <header class="top"><div class="brand">${esc(S.household.name)}</div>
     <div class="who"><span>${esc(S.me.display_name)}</span><button class="link" id="b-sair">Sair</button></div></header>
   <main id="view"></main>
-  <nav class="tabs" id="nav"><a href="#/central" data-r="central">Central</a><a href="#/ambientes" data-r="ambientes">Ambientes</a></nav>`;
+  <nav class="tabs" id="nav"><a href="#/central" data-r="central">Central</a><a href="#/tarefas" data-r="tarefas">Tarefas</a><a href="#/ambientes" data-r="ambientes">Ambientes</a></nav>`;
   $("#b-sair").onclick = () => db.auth.signOut();
 }
-const views = { central: vCentral, ambientes: vAmbientes };
+const views = { central: vCentral, tarefas: vTarefas, ambientes: vAmbientes };
 function route() {
   const r = location.hash.replace(/^#\/?/, "") || "central";
   const name = views[r] ? r : "central";
@@ -98,17 +61,32 @@ function route() {
 window.addEventListener("hashchange", () => { if (S.me) route(); });
 
 /* ---------- Central da Casa ---------- */
+function descAtividade(l) {
+  const n = l.new_data || {}, o = l.old_data || {};
+  const verbo = { INSERT: "cadastrou", UPDATE: "atualizou", DELETE: "removeu" }[l.action] || l.action;
+  if (l.table_name === "rooms") return `${verbo} o ambiente <b>${esc(n.name || o.name)}</b>`;
+  if (l.table_name === "tasks") return `${{ INSERT: "criou", UPDATE: "atualizou", DELETE: "apagou" }[l.action]} a tarefa <b>${esc(n.title || o.title)}</b>`;
+  if (l.table_name === "task_occurrences") {
+    const titulo = esc(taskTitle(n.task_id || o.task_id));
+    const acao = n.status !== o.status ? (n.status === "done" ? "concluiu" : n.status === "canceled" ? "cancelou" : "alterou a situação de") : "alterou o prazo de";
+    return `${acao} a tarefa <b>${titulo}</b>`;
+  }
+  return `${verbo} um registro de ${esc(l.table_name)}`;
+}
 async function vCentral(el) {
   const d = new Date(), h = d.getHours();
   const saud = h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite";
   let data = d.toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   data = data.charAt(0).toUpperCase() + data.slice(1);
+  await loadTasks();
+  const p = painelCentral();
   el.innerHTML = `
     <section class="hero"><h1>${saud}, ${esc(S.me.display_name.split(" ")[0])}.</h1><div class="mu">${esc(data)}</div></section>
-    <div class="grid"><a class="card stat" href="#/ambientes"><b>${S.rooms.length}</b><span>ambientes cadastrados</span></a></div>
+    <div class="grid">${p.stat}<a class="card stat" href="#/ambientes"><b>${S.rooms.length}</b><span>ambientes cadastrados</span></a></div>
+    ${p.lista}
     <h2>Atividade recente</h2>
     <div class="card" id="atv">Carregando…</div>
-    <p class="mu sm nota">Tarefas, estoque, compras e os demais painéis aparecerão aqui conforme cada módulo for ativado. Esta tela mostra apenas dados realmente registrados.</p>
+    <p class="mu sm nota">Estoque, compras e os demais painéis aparecerão aqui conforme cada módulo for ativado. Esta tela mostra apenas dados realmente registrados.</p>
     <div class="foot"><button class="btn" id="b-bkp">Baixar backup (JSON)</button></div>`;
   $("#b-bkp").onclick = backup;
 
@@ -116,12 +94,9 @@ async function vCentral(el) {
   const box = $("#atv");
   if (error) { box.textContent = "Não foi possível carregar o histórico."; return; }
   if (!logs.length) { box.innerHTML = `<span class="mu">Nenhuma atividade registrada ainda.</span>`; return; }
-  const verbo = { INSERT: "cadastrou", UPDATE: "atualizou", DELETE: "removeu" };
-  const tipo = { rooms: "o ambiente" };
   box.innerHTML = `<ul class="atv">` + logs.map(l => {
-    const nome = (l.new_data && l.new_data.name) || (l.old_data && l.old_data.name) || "";
     const quando = new Date(l.created_at).toLocaleString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-    return `<li><b>${esc(memberName(l.changed_by))}</b> ${verbo[l.action] || l.action} ${tipo[l.table_name] || "um registro de " + esc(l.table_name)} <b>${esc(nome)}</b><div class="mu sm">${esc(quando)}</div></li>`;
+    return `<li><b>${esc(memberName(l.changed_by))}</b> ${descAtividade(l)}<div class="mu sm">${esc(quando)}</div></li>`;
   }).join("") + `</ul>`;
 }
 
@@ -129,13 +104,14 @@ async function vCentral(el) {
 async function vAmbientes(el) {
   el.innerHTML = `
     <h1>Ambientes</h1>
-    <p class="mu sm">Os cômodos e espaços da casa. Tarefas, bens e produtos serão ligados a eles nas próximas fases.</p>
+    <p class="mu sm">Os cômodos e espaços da casa. Bens e produtos serão ligados a eles nas próximas fases.</p>
     <form id="f-room" class="card row-form">
       <input name="name" placeholder="Novo ambiente (ex.: Escritório)" required maxlength="60">
       <input name="description" placeholder="Descrição (opcional)" maxlength="200">
       <button class="btn pri">Adicionar</button>
     </form>
     <div id="rooms"></div>`;
+  await loadTasks();
   drawRooms();
 
   $("#f-room").onsubmit = async ev => {
@@ -147,7 +123,6 @@ async function vAmbientes(el) {
     if (error) return toast(erro(error), true);
     await loadRooms(); drawRooms(); f.reset(); toast("Ambiente adicionado.");
   };
-
   $("#rooms").onclick = ev => {
     const b = ev.target.closest("button[data-act]");
     if (!b) return;
@@ -159,10 +134,11 @@ async function vAmbientes(el) {
 function drawRooms() {
   const box = $("#rooms");
   if (!box) return;
-  box.innerHTML = S.rooms.length ? S.rooms.map(r => `
-    <article class="card room"><div><h3>${esc(r.name)}</h3>${r.description ? `<p>${esc(r.description)}</p>` : ""}</div>
-      <div class="acts"><button class="btn sm" data-act="edit" data-id="${r.id}">Editar</button><button class="btn sm" data-act="del" data-id="${r.id}">Apagar</button></div></article>`).join("")
-    : `<p class="mu">Nenhum ambiente cadastrado.</p>`;
+  box.innerHTML = S.rooms.length ? S.rooms.map(r => {
+    const n = abertasNaSala(r.id);
+    return `<article class="card room"><div><h3>${esc(r.name)}</h3>${r.description ? `<p>${esc(r.description)}</p>` : ""}${n ? `<p>${n} tarefa${n > 1 ? "s" : ""} em aberto</p>` : ""}</div>
+      <div class="acts"><button class="btn sm" data-act="edit" data-id="${r.id}">Editar</button><button class="btn sm" data-act="del" data-id="${r.id}">Apagar</button></div></article>`;
+  }).join("") : `<p class="mu">Nenhum ambiente cadastrado.</p>`;
 }
 function editRoom(room) {
   dialog(`<h3>Editar ambiente</h3>
@@ -176,17 +152,17 @@ function editRoom(room) {
     const { data, error } = await db.from("rooms").update({ name, description: f.description.value.trim() || null }).eq("id", room.id).select();
     if (error) return toast(erro(error), true);
     if (!data.length) return toast("Não foi possível salvar a alteração.", true);
-    dlg.close(); await loadRooms(); drawRooms(); toast("Ambiente atualizado.");
+    closeDialog(); await loadRooms(); drawRooms(); toast("Ambiente atualizado.");
   };
 }
 function delRoom(room) {
-  dialog(`<h3>Apagar ambiente?</h3><p>Apagar “${esc(room.name)}”? A alteração fica registrada no histórico.</p>
+  dialog(`<h3>Apagar ambiente?</h3><p>Apagar “${esc(room.name)}”? As tarefas ligadas a ele continuam existindo, só ficam sem ambiente. A alteração fica registrada no histórico.</p>
     <div class="dacts"><button class="btn" data-close>Cancelar</button><button class="btn dn" id="b-del">Apagar</button></div>`);
   $("#b-del").onclick = async () => {
     const { data, error } = await db.from("rooms").delete().eq("id", room.id).select();
     if (error) return toast(erro(error), true);
     if (!data.length) return toast("Não foi possível apagar o ambiente.", true);
-    dlg.close(); await loadRooms(); drawRooms(); toast("Ambiente apagado.");
+    closeDialog(); await loadRooms(); drawRooms(); toast("Ambiente apagado.");
   };
 }
 
@@ -205,8 +181,9 @@ async function backup() {
   const btn = $("#b-bkp");
   btn.disabled = true;
   try {
-    const out = { app: "A Casa", versao: 1, exportado_em: new Date().toISOString() };
-    for (const t of ["households", "household_members", "rooms", "audit_logs"]) out[t] = await fetchAll(t);
+    const tabelas = ["households", "household_members", "rooms", "audit_logs", ...(tarefasOk() ? ["tasks", "task_occurrences"] : [])];
+    const out = { app: "A Casa", versao: 2, exportado_em: new Date().toISOString() };
+    for (const t of tabelas) out[t] = await fetchAll(t);
     const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
